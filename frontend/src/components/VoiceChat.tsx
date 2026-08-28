@@ -1,14 +1,23 @@
-import type { ConnectionStatus, Message } from "../types";
+import { useEffect, useRef, type ReactNode } from "react";
+import type { ConnectionStatus, Message, RoundLatency } from "../types";
 
 interface VoiceChatProps {
+  title?: string;
+  subtitle?: string;
+  emptyHint?: string;
+  emptySubHint?: string;
+  assistantLabel?: string;
   status: ConnectionStatus;
   messages: Message[];
   error: string | null;
   isSpeaking: boolean;
-  useLangfuse: boolean;
-  onUseLangfuseChange: (value: boolean) => void;
+  activityLabel?: string;
+  useLangfuse?: boolean;
+  onUseLangfuseChange?: (value: boolean) => void;
   onConnect: () => void;
   onDisconnect: () => void;
+  footerExtra?: ReactNode;
+  micLoud?: boolean;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -19,43 +28,78 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   error: "连接错误",
 };
 
+function formatMs(ms: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} 秒`;
+}
+
+function formatMessageLatency(latency: RoundLatency): string {
+  const parts = [
+    `ASR 收口 ${formatMs(latency.asrMs)}`,
+    `首句生成 ${formatMs(latency.llmMs)}`,
+    `首句 TTS ${formatMs(latency.ttsMs)}`,
+  ];
+  if (latency.totalMs != null) {
+    parts.push(`听到声音 ${formatMs(latency.totalMs)}`);
+  }
+  return parts.join(" · ");
+}
+
 export function VoiceChat({
+  title = "Realtime 语音对话",
+  subtitle = "基于 OpenAI Realtime API · WebRTC",
+  emptyHint = "点击「开始对话」后，直接对着麦克风说话即可。",
+  emptySubHint = "AI 会通过扬声器回复，对话内容会显示在这里。",
+  assistantLabel = "AI",
   status,
   messages,
   error,
   isSpeaking,
-  useLangfuse,
+  activityLabel,
+  useLangfuse = false,
   onUseLangfuseChange,
   onConnect,
   onDisconnect,
+  footerExtra,
+  micLoud = false,
 }: VoiceChatProps) {
   const isConnected = status === "connected";
   const isBusy = status === "connecting";
   const toggleDisabled = isConnected || isBusy;
+  const panelRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   return (
     <div className="voice-chat">
       <header className="header">
         <div>
-          <h1>Realtime 语音对话</h1>
-          <p className="subtitle">基于 OpenAI Realtime API · WebRTC</p>
+          <h1>{title}</h1>
+          <p className="subtitle">{subtitle}</p>
         </div>
         <div className="header-actions">
-          <label className={`langfuse-toggle ${toggleDisabled ? "disabled" : ""}`}>
-            <input
-              type="checkbox"
-              checked={useLangfuse}
-              disabled={toggleDisabled}
-              onChange={(e) => onUseLangfuseChange(e.target.checked)}
-            />
-            <span className="toggle-track" aria-hidden="true">
-              <span className="toggle-thumb" />
-            </span>
-            <span className="toggle-label">
-              Langfuse 提示词
-              <span className="toggle-hint">constitution + free_coach</span>
-            </span>
-          </label>
+          {onUseLangfuseChange ? (
+            <label className={`langfuse-toggle ${toggleDisabled ? "disabled" : ""}`}>
+              <input
+                type="checkbox"
+                checked={useLangfuse}
+                disabled={toggleDisabled}
+                onChange={(e) => onUseLangfuseChange(e.target.checked)}
+              />
+              <span className="toggle-track" aria-hidden="true">
+                <span className="toggle-thumb" />
+              </span>
+              <span className="toggle-label">
+                Langfuse 提示词
+                <span className="toggle-hint">constitution + free_coach</span>
+              </span>
+            </label>
+          ) : null}
           <div className={`status-badge status-${status}`}>
             <span className="status-dot" />
             {STATUS_LABEL[status]}
@@ -63,24 +107,29 @@ export function VoiceChat({
         </div>
       </header>
 
-      <section className="transcript-panel">
+      <section className="transcript-panel" ref={panelRef}>
         {messages.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">🎙️</div>
-            <p>点击「开始对话」后，直接对着麦克风说话即可。</p>
-            <p className="hint">AI 会通过扬声器回复，对话内容会显示在这里。</p>
+            <p>{emptyHint}</p>
+            <p className="hint">{emptySubHint}</p>
           </div>
         ) : (
           <ul className="message-list">
             {messages.map((msg) => (
               <li key={msg.id} className={`message message-${msg.role}`}>
                 <span className="message-role">
-                  {msg.role === "user" ? "你" : "AI"}
+                  {msg.role === "user" ? "你" : assistantLabel}
                 </span>
                 <p className="message-text">
                   {msg.text}
                   {msg.isPartial && <span className="cursor">▍</span>}
                 </p>
+                {msg.role === "assistant" && msg.latency ? (
+                  <p className="message-latency">
+                    {formatMessageLatency(msg.latency)}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -91,11 +140,15 @@ export function VoiceChat({
 
       <footer className="controls">
         {isConnected && (
-          <div className={`mic-indicator ${isSpeaking ? "active" : ""}`}>
+          <div className={`mic-indicator ${isSpeaking || micLoud ? "active" : ""}`}>
             <span className="mic-ring" />
-            <span>{isSpeaking ? "正在聆听…" : "等待你说话"}</span>
+            <span>
+              {activityLabel || (isSpeaking ? "正在聆听…" : "等待你说话")}
+            </span>
           </div>
         )}
+
+        {footerExtra}
 
         <div className="button-group">
           {!isConnected ? (

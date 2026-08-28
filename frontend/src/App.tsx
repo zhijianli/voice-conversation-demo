@@ -1,24 +1,10 @@
-import { useState } from "react";
-import { VoiceChat } from "./components/VoiceChat";
-import { useRealtime } from "./hooks/useRealtime";
+import { FreeCoachVoicePage } from "./pages/FreeCoachVoicePage";
+import { RealtimePage } from "./pages/RealtimePage";
+
+function isRealtimePath() {
+  return window.location.pathname.replace(/\/+$/, "").endsWith("/openai");
+}
 
 export default function App() {
-  const { status, messages, error, isSpeaking, connect, disconnect } =
-    useRealtime();
-  const [useLangfuse, setUseLangfuse] = useState(true);
-
-  return (
-    <div className="app">
-      <VoiceChat
-        status={status}
-        messages={messages}
-        error={error}
-        isSpeaking={isSpeaking}
-        useLangfuse={useLangfuse}
-        onUseLangfuseChange={setUseLangfuse}
-        onConnect={() => connect(useLangfuse)}
-        onDisconnect={disconnect}
-      />
-    </div>
-  );
+  return isRealtimePath() ? <RealtimePage /> : <FreeCoachVoicePage />;
 }

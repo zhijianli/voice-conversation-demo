@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 鍦?EC2 涓婃墽琛岋細瑙ｅ帇浠ｇ爜銆佸畨瑁呬緷璧栥€佹瀯寤哄墠绔€佸彂甯冮潤鎬佹枃浠躲€侀噸鍚湇鍔?
+# On EC2: extract archive, install deps, build frontend, publish static files, restart service
 set -euo pipefail
 
-APP_NAME="gpt-realtime-demo"
-PROJECT_DIR="/home/ec2-user/projects/gpt-realtime-demo"
-WEBROOT="/var/www/gpt-realtime-demo"
-ARCHIVE="${1:-/tmp/gpt-realtime-demo.tar.gz}"
+APP_NAME="voice-conversation-demo"
+PROJECT_DIR="/home/ec2-user/projects/voice-conversation-demo"
+WEBROOT="/var/www/voice-conversation-demo"
+ARCHIVE="${1:-/tmp/voice-conversation-demo.tar.gz}"
 
 log() { printf '[remote-deploy] %s\n' "$*"; }
 
@@ -45,6 +45,7 @@ sudo rsync -a --delete dist/ "$WEBROOT/"
 
 log "restart backend"
 sudo systemctl restart "$APP_NAME"
+sleep 3
 
 log "health check"
 curl -fsS http://127.0.0.1:8000/api/health >/dev/null

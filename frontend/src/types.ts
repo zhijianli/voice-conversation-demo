@@ -5,11 +5,22 @@ export type ConnectionStatus =
   | "disconnected"
   | "error";
 
+export type LatencyPhase = "idle" | "llm" | "tts" | "done";
+
+export interface RoundLatency {
+  asrMs: number | null;
+  llmMs: number | null;
+  ttsMs: number | null;
+  totalMs: number | null;
+  phase: LatencyPhase;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   isPartial?: boolean;
+  latency?: RoundLatency;
 }
 
 export interface RealtimeState {

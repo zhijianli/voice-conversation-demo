@@ -4,12 +4,14 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: "/realtime/",
+  appType: "spa",
   server: {
     port: 5173,
     proxy: {
       "/realtime/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
+        ws: true,
         rewrite: (path) => path.replace(/^\/realtime\/api/, "/api"),
       },
     },

@@ -5,12 +5,12 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Key = "C:\Users\zoruf\.ssh\everecho-aws.pem"
 $Host_ = "ec2-user@3.142.136.175"
-$RemoteArchive = "/tmp/gpt-realtime-demo.tar.gz"
-$TarLocal = Join-Path $env:TEMP "gpt-realtime-demo.tar.gz"
+$RemoteArchive = "/tmp/voice-conversation-demo.tar.gz"
+$TarLocal = Join-Path $env:TEMP "voice-conversation-demo.tar.gz"
 
 Write-Host ""
 Write-Host "========================================"
-Write-Host "  gpt-realtime-demo 同步 + 部署"
+Write-Host "  voice-conversation-demo 同步 + 部署"
 Write-Host "========================================"
 Write-Host ""
 

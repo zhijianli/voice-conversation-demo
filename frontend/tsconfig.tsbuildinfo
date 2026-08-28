@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/voicechat.tsx","./src/hooks/userealtime.ts"],"version":"5.7.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/pagenav.tsx","./src/components/voicechat.tsx","./src/hooks/usefreecoachvoice.ts","./src/hooks/userealtime.ts","./src/lib/voice.ts","./src/pages/freecoachvoicepage.tsx","./src/pages/realtimepage.tsx"],"version":"5.7.3"}

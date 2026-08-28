@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# gpt-realtime-demo 云服务器部署脚本 (Ubuntu/Debian)
+# voice-conversation-demo 云服务器部署脚本 (Ubuntu/Debian)
 #
 # 用法:
 #   chmod +x deploy.sh
@@ -10,14 +10,14 @@
 #   ./deploy.sh status                               # 查看状态
 #
 # 部署前请确保:
-#   1. 已安装 git，并将本项目放到服务器 (如 /opt/gpt-realtime-demo)
+#   1. 已安装 git，并将本项目放到服务器 (如 /opt/voice-conversation-demo)
 #   2. 已配置 backend/.env (至少 OPENAI_API_KEY)
 #   3. 域名已解析到本机 (若使用 HTTPS)
 #   4. 生产环境需 HTTPS，浏览器才允许使用麦克风 (非 localhost)
 #
 set -euo pipefail
 
-APP_NAME="gpt-realtime-demo"
+APP_NAME="voice-conversation-demo"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="${ROOT_DIR}/backend"
 FRONTEND_DIR="${ROOT_DIR}/frontend"
