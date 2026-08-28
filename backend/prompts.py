@@ -1,8 +1,6 @@
 import logging
 import os
 
-from langfuse import get_client
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_INSTRUCTIONS = (
@@ -35,6 +33,8 @@ _langfuse = None
 def _get_langfuse():
     global _langfuse
     if _langfuse is None:
+        from langfuse import get_client
+
         _langfuse = get_client()
     return _langfuse
 

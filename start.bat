@@ -43,8 +43,21 @@ if not exist "%BACKEND%\.env" (
     )
 )
 
+set "NEED_VENV=0"
 if not exist "%VENV_PY%" (
-    echo [1/4] Creating Python virtual environment ...
+    set "NEED_VENV=1"
+) else if exist "%VENV%\pyvenv.cfg" (
+    findstr /I /C:"%VENV%" "%VENV%\pyvenv.cfg" >nul 2>&1
+    if errorlevel 1 set "NEED_VENV=1"
+)
+
+if "!NEED_VENV!"=="1" (
+    if exist "%VENV%" (
+        echo [1/4] Virtual environment path is stale, recreating ...
+        rmdir /s /q "%VENV%"
+    ) else (
+        echo [1/4] Creating Python virtual environment ...
+    )
     python -m venv "%VENV%"
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment.
@@ -57,11 +70,13 @@ if not exist "%VENV_PY%" (
 
 echo [2/4] Installing / updating Python dependencies ...
 set "PIP_CONFIG_FILE="
-"%VENV_PIP%" install --isolated -r "%BACKEND%\requirements.txt" -q
+"%VENV_PY%" -m pip install --isolated -r "%BACKEND%\requirements.txt"
 if errorlevel 1 (
-    echo [WARN] pip install may have failed. Check network or proxy settings.
-    echo        Manual fix: cd backend ^&^& .venv\Scripts\pip install --isolated -r requirements.txt
+    echo [ERROR] pip install failed. Check network or proxy settings.
+    echo        Manual fix: cd backend ^&^& .venv\Scripts\python.exe -m pip install --isolated -r requirements.txt
     echo        Or edit %%APPDATA%%\pip\pip.ini and remove invalid proxy setting.
+    pause
+    exit /b 1
 )
 
 if not exist "%FRONTEND%\node_modules" (
@@ -82,12 +97,12 @@ if not exist "%FRONTEND%\node_modules" (
 echo [4/4] Starting backend and frontend ...
 echo.
 echo   Backend:  http://127.0.0.1:8000
-echo   Frontend: http://localhost:5173
+echo   Frontend: http://localhost:5173/realtime/
 echo.
 echo   Close the backend/frontend windows to stop services.
 echo.
 
-start "Realtime Backend" /D "%BACKEND%" cmd /k "call .venv\Scripts\activate.bat && uvicorn main:app --reload --host 127.0.0.1 --port 8000"
+start "Realtime Backend" /D "%BACKEND%" cmd /k ""%VENV_PY%" -m uvicorn main:app --reload --host 127.0.0.1 --port 8000"
 
 timeout /t 2 /nobreak >nul
 
@@ -95,9 +110,9 @@ start "Realtime Frontend" /D "%FRONTEND%" cmd /k "npm run dev"
 
 timeout /t 3 /nobreak >nul
 
-start "" "http://localhost:5173"
+start "" "http://localhost:5173/realtime/"
 
-echo Browser opened: http://localhost:5173
+echo Browser opened: http://localhost:5173/realtime/
 echo You can close this window now.
 timeout /t 3 >nul
 
