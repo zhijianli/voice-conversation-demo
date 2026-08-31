@@ -1,0 +1,30 @@
+- generic [ref=f1e3]:
+  - navigation "语音对话模式" [ref=f1e4]:
+    - link "Free Coach" [ref=f1e5] [cursor=pointer]:
+      - /url: /realtime/
+    - link "OpenAI Realtime" [ref=f1e6] [cursor=pointer]:
+      - /url: /realtime/openai
+  - generic [ref=f1e7]:
+    - banner [ref=f1e8]:
+      - generic [ref=f1e9]:
+        - heading "Free Coach 语音对话" [level=1] [ref=f1e10]
+        - paragraph [ref=f1e11]: STT Amazon Transcribe (zh-CN) · TTS MiniMax speech-2.6-turbo · EverEcho free-coach · 温暖闺蜜
+      - generic [ref=f1e12]:
+        - group "识别与朗读语言" [ref=f1e13]:
+          - button "中文" [ref=f1e14] [cursor=pointer]
+          - button "English" [ref=f1e15] [cursor=pointer]
+        - generic [ref=f1e16]: 未连接
+    - group "教练音色" [ref=f1e18]:
+      - generic [ref=f1e19]: 音色
+      - generic [ref=f1e20]:
+        - button "阅历姐姐" [ref=f1e21] [cursor=pointer]
+        - button "温暖闺蜜" [ref=f1e22] [cursor=pointer]
+        - button "温暖少女" [ref=f1e23] [cursor=pointer]
+        - button "知性少女" [ref=f1e24] [cursor=pointer]
+        - button "慵懒少女" [ref=f1e25] [cursor=pointer]
+    - generic [ref=f1e27]:
+      - generic [ref=f1e28]: 🎙️
+      - paragraph [ref=f1e29]: 点击「开始对话」后对着麦克风说中文，也可以在下方打字发送。
+      - paragraph [ref=f1e30]: 识别结果会发给 EverEcho free-coach，回复由 MiniMax 中文音色朗读。
+    - contentinfo [ref=f1e31]:
+      - button "开始对话" [ref=f1e33] [cursor=pointer]

@@ -1,6 +1,8 @@
-function currentPage(): "realtime" | "free-coach" {
+function currentPage(): "realtime" | "free-coach" | "elevenlabs" {
   const path = window.location.pathname.replace(/\/+$/, "");
-  return path.endsWith("/openai") ? "realtime" : "free-coach";
+  if (path.endsWith("/openai")) return "realtime";
+  if (path.endsWith("/elevenlabs")) return "elevenlabs";
+  return "free-coach";
 }
 
 export function PageNav() {
@@ -9,11 +11,14 @@ export function PageNav() {
 
   return (
     <nav className="page-nav" aria-label="语音对话模式">
-      <a
-        className={page === "free-coach" ? "active" : ""}
-        href={base}
-      >
+      <a className={page === "free-coach" ? "active" : ""} href={base}>
         Free Coach
+      </a>
+      <a
+        className={page === "elevenlabs" ? "active" : ""}
+        href={`${base}elevenlabs`}
+      >
+        ElevenLabs
       </a>
       <a
         className={page === "realtime" ? "active" : ""}

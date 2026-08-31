@@ -17,6 +17,14 @@ from dotenv import load_dotenv
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from elevenlabs_tts import elevenlabs_config, synthesize_elevenlabs
+from minimax_tts import (
+    MINIMAX_MODEL_ID,
+    MINIMAX_VOICE_ID,
+    minimax_config,
+    synthesize_minimax,
+)
+
 load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
@@ -32,6 +40,38 @@ POLLY_MAX_CHARS = 2500
 POLLY_PCM_SAMPLE_RATE = "16000"
 POLLY_MP3_SAMPLE_RATE = "24000"
 
+VOICE_PROFILES = {
+    "en": {
+        "id": "en",
+        "transcribe_language": "en-US",
+        "tts_provider": "polly",
+        "polly_voice": "Ruth",
+        "polly_engine": "generative",
+        "polly_language": "en-US",
+    },
+    "zh": {
+        "id": "zh",
+        "transcribe_language": "zh-CN",
+        "tts_provider": "minimax",
+        "minimax_voice": MINIMAX_VOICE_ID,
+        "minimax_model": MINIMAX_MODEL_ID,
+        "minimax_language": "Chinese",
+    },
+}
+
+
+def normalize_voice_language(language: str | None) -> str:
+    key = (language or "en").strip().lower()
+    if key in {"zh", "zh-cn", "cmn", "cmn-cn", "chinese"}:
+        return "zh"
+    if key in {"en", "en-us", "english"}:
+        return "en"
+    raise ValueError(f"不支持的语言：{language}")
+
+
+def voice_profile(language: str | None = "en") -> dict[str, str]:
+    return VOICE_PROFILES[normalize_voice_language(language)]
+
 _polly_client = None
 
 
@@ -46,6 +86,9 @@ def aws_voice_config() -> dict[str, Any]:
         "credentials_configured": bool(
             os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_PROFILE")
         ),
+        **elevenlabs_config(),
+        **minimax_config(),
+        "voice_profiles": VOICE_PROFILES,
     }
 
 
@@ -88,16 +131,22 @@ def split_for_polly(text: str, max_chars: int = POLLY_MAX_CHARS) -> list[str]:
     return chunks or [cleaned[:max_chars]]
 
 
-def _polly_bytes(client, text: str, output_format: str, sample_rate: str) -> bytes:
+def _polly_bytes(
+    client: Any,
+    text: str,
+    output_format: str,
+    sample_rate: str,
+    profile: dict[str, str],
+) -> bytes:
     try:
         response = client.synthesize_speech(
-            Engine=POLLY_ENGINE,
-            LanguageCode=POLLY_LANGUAGE_CODE,
+            Engine=profile["polly_engine"],
+            LanguageCode=profile["polly_language"],
             OutputFormat=output_format,
             SampleRate=sample_rate,
             Text=text,
             TextType="text",
-            VoiceId=POLLY_VOICE_ID,
+            VoiceId=profile["polly_voice"],
         )
     except (BotoCoreError, ClientError) as exc:
         raise RuntimeError(f"Amazon Polly 合成失败：{exc}") from exc
@@ -108,24 +157,32 @@ def _polly_bytes(client, text: str, output_format: str, sample_rate: str) -> byt
     return stream.read()
 
 
-def synthesize_speech(text: str) -> tuple[bytes, str]:
+def synthesize_speech(text: str, language: str | None = "en") -> tuple[bytes, str]:
     """Return (audio_bytes, media_type). One MP3 clip for a normal-length reply."""
     cleaned = (text or "").strip()
     if not cleaned:
         raise ValueError("TTS 文本为空")
+
+    profile = voice_profile(language)
+    if profile.get("tts_provider") == "minimax":
+        return synthesize_minimax(cleaned, profile)
+    if profile.get("tts_provider") == "elevenlabs":
+        return synthesize_elevenlabs(cleaned, profile)
 
     pieces = split_for_polly(cleaned)
     client = get_polly_client()
 
     if len(pieces) == 1:
         return (
-            _polly_bytes(client, pieces[0], "mp3", POLLY_MP3_SAMPLE_RATE),
+            _polly_bytes(client, pieces[0], "mp3", POLLY_MP3_SAMPLE_RATE, profile),
             "audio/mpeg",
         )
 
     pcm = bytearray()
     for piece in pieces:
-        pcm.extend(_polly_bytes(client, piece, "pcm", POLLY_PCM_SAMPLE_RATE))
+        pcm.extend(
+            _polly_bytes(client, piece, "pcm", POLLY_PCM_SAMPLE_RATE, profile)
+        )
     return pcm_to_wav(bytes(pcm), sample_rate=int(POLLY_PCM_SAMPLE_RATE)), "audio/wav"
 
 
@@ -154,10 +211,32 @@ class _WebsocketTranscriptHandler(TranscriptResultStreamHandler):
             await self.websocket.send_text(json.dumps(payload, ensure_ascii=False))
 
 
-async def transcribe_websocket(websocket: WebSocket) -> None:
+async def _close_websocket(websocket: WebSocket) -> None:
+    if websocket.client_state != WebSocketState.CONNECTED:
+        return
+    try:
+        await websocket.close()
+    except RuntimeError:
+        pass
+
+
+async def transcribe_websocket(websocket: WebSocket, language: str = "en") -> None:
     await websocket.accept()
+    try:
+        await websocket.send_text(json.dumps({"type": "accepted"}))
+    except RuntimeError:
+        return
+    try:
+        profile = voice_profile(language)
+    except ValueError as exc:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
+        )
+        await _close_websocket(websocket)
+        return
+
     audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=40)
-    stream = None
+    client_gone = asyncio.Event()
 
     async def read_client():
         try:
@@ -169,7 +248,10 @@ async def transcribe_websocket(websocket: WebSocket) -> None:
                 if "bytes" in message and message["bytes"] is not None:
                     chunk = message["bytes"]
                     if chunk:
-                        await audio_queue.put(chunk)
+                        try:
+                            audio_queue.put_nowait(chunk)
+                        except asyncio.QueueFull:
+                            pass
                 elif "text" in message and message["text"]:
                     try:
                         control = json.loads(message["text"])
@@ -180,14 +262,15 @@ async def transcribe_websocket(websocket: WebSocket) -> None:
         except WebSocketDisconnect:
             pass
         finally:
+            client_gone.set()
             await audio_queue.put(None)
 
-    async def write_audio():
-        assert stream is not None
+    async def pump_to_aws(stream: Any):
         try:
-            while True:
+            while not client_gone.is_set():
                 chunk = await audio_queue.get()
                 if chunk is None:
+                    await audio_queue.put(None)
                     break
                 await stream.input_stream.send_audio_event(audio_chunk=chunk)
         finally:
@@ -196,49 +279,58 @@ async def transcribe_websocket(websocket: WebSocket) -> None:
             except Exception:
                 logger.debug("end transcribe stream ignored", exc_info=True)
 
+    reader = asyncio.create_task(read_client())
     try:
         client = TranscribeStreamingClient(region=AWS_REGION)
-        stream = await client.start_stream_transcription(
-            language_code=TRANSCRIBE_LANGUAGE_CODE,
-            media_sample_rate_hz=TRANSCRIBE_SAMPLE_RATE,
-            media_encoding="pcm",
-            enable_partial_results_stabilization=True,
-            partial_results_stability="medium",
-        )
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "ready",
-                    "language": TRANSCRIBE_LANGUAGE_CODE,
-                    "sample_rate": TRANSCRIBE_SAMPLE_RATE,
-                }
+        while not client_gone.is_set():
+            if websocket.client_state != WebSocketState.CONNECTED:
+                break
+            stream = await client.start_stream_transcription(
+                language_code=profile["transcribe_language"],
+                media_sample_rate_hz=TRANSCRIBE_SAMPLE_RATE,
+                media_encoding="pcm",
+                enable_partial_results_stabilization=True,
+                partial_results_stability="medium",
             )
-        )
-        handler = _WebsocketTranscriptHandler(stream.output_stream, websocket)
-        reader = asyncio.create_task(read_client())
-        writer = asyncio.create_task(write_audio())
-        handler_task = asyncio.create_task(handler.handle_events())
-        try:
-            await handler_task
-        finally:
-            await audio_queue.put(None)
-            if websocket.client_state == WebSocketState.CONNECTED:
-                await websocket.close()
-            await asyncio.gather(reader, writer, return_exceptions=True)
+            if websocket.client_state != WebSocketState.CONNECTED:
+                break
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "ready",
+                        "language": profile["transcribe_language"],
+                        "sample_rate": TRANSCRIBE_SAMPLE_RATE,
+                    }
+                )
+            )
+            handler = _WebsocketTranscriptHandler(stream.output_stream, websocket)
+            writer = asyncio.create_task(pump_to_aws(stream))
+            try:
+                await handler.handle_events()
+            except Exception:
+                logger.exception("Amazon Transcribe stream ended")
+            finally:
+                writer.cancel()
+                await asyncio.gather(writer, return_exceptions=True)
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         logger.exception("Amazon Transcribe streaming failed")
         if websocket.client_state == WebSocketState.CONNECTED:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "message": f"Amazon Transcribe 连接失败：{exc}",
-                    },
-                    ensure_ascii=False,
+            try:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": f"Amazon Transcribe 连接失败：{exc}",
+                        },
+                        ensure_ascii=False,
+                    )
                 )
-            )
+            except RuntimeError:
+                pass
     finally:
-        if websocket.client_state == WebSocketState.CONNECTED:
-            await websocket.close()
+        client_gone.set()
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+        await _close_websocket(websocket)

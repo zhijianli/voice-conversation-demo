@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -13,11 +15,37 @@ from fastapi.responses import StreamingResponse
 
 load_dotenv(override=True)
 
-from aws_voice import aws_voice_config, synthesize_speech, transcribe_websocket
+logger = logging.getLogger(__name__)
+
+from aws_voice import (
+    aws_voice_config,
+    normalize_voice_language,
+    synthesize_speech,
+    transcribe_websocket,
+    voice_profile,
+)
 from everecho_client import (
-    bootstrap_free_coach_session,
     everecho_config,
+    session_pool,
     stream_free_coach_message,
+)
+from elevenlabs_adapter import (
+    ELEVENLABS_AGENT_ID,
+    ELEVENLABS_API_KEY,
+    ELEVENLABS_BASE_URL,
+    custom_llm_authorized,
+    elevenlabs_adapter_config,
+    iter_ui_events,
+    public_page_config,
+    stream_free_coach_as_openai,
+)
+from minimax_tts import (
+    MINIMAX_PCM_SAMPLE_RATE,
+    MINIMAX_PROVIDER,
+    close_minimax_runtime,
+    iter_minimax_pcm,
+    resolve_minimax_voice,
+    warmup_minimax,
 )
 from prompts import (
     LANGFUSE_CONSTITUTION_PROMPT_NAME,
@@ -63,7 +91,21 @@ def json_error(message: str, status_code: int = 500, extra: dict[str, Any] | Non
     )
 
 
-app = FastAPI(title="OpenAI Realtime Demo API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    warmup = asyncio.create_task(session_pool.warmup())
+    tts_warmup = asyncio.create_task(warmup_minimax(force=True))
+    try:
+        yield
+    finally:
+        if not warmup.done():
+            warmup.cancel()
+        if not tts_warmup.done():
+            tts_warmup.cancel()
+        await close_minimax_runtime()
+
+
+app = FastAPI(title="OpenAI Realtime Demo API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,7 +127,9 @@ async def health():
         "free_coach": {
             **everecho_config(),
             **aws_voice_config(),
+            "session_pool": session_pool.snapshot(),
         },
+        "elevenlabs_agent": elevenlabs_adapter_config(),
     }
 
 
@@ -125,8 +169,9 @@ async def create_session(
 
 @app.post("/api/free-coach/bootstrap")
 async def free_coach_bootstrap():
+    asyncio.create_task(warmup_minimax())
     try:
-        session = await bootstrap_free_coach_session()
+        session = await session_pool.take()
     except Exception as exc:
         return json_error(str(exc), 502)
     return session
@@ -167,11 +212,53 @@ async def free_coach_messages(request: Request):
 async def free_coach_tts(request: Request):
     payload = await request.json()
     text = str(payload.get("text") or "").strip()
+    language = str(payload.get("language") or "en")
     if not text:
         return json_error("TTS 文本为空", 400)
 
     try:
-        audio, media_type = await asyncio_synthesize(text)
+        lang = normalize_voice_language(language)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+
+    if lang == "zh" and MINIMAX_PROVIDER != "gmi":
+        profile = dict(voice_profile(lang))
+        profile["minimax_voice"] = resolve_minimax_voice(payload.get("voice_id"))
+
+        async def pcm_chunks():
+            min_bytes = int(MINIMAX_PCM_SAMPLE_RATE * 0.1) * 2
+            pending = b""
+            try:
+                async for chunk in iter_minimax_pcm(text, profile):
+                    if not chunk:
+                        continue
+                    pending += chunk
+                    if len(pending) >= min_bytes:
+                        yield pending
+                        pending = b""
+                if pending:
+                    yield pending
+            except Exception as exc:
+                # Headers are already sent; raising here leaves the browser hanging
+                # on an incomplete chunked body instead of showing an error.
+                print(f"TTS stream failed: {exc}", flush=True)
+                return
+
+        return StreamingResponse(
+            pcm_chunks(),
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "X-Audio-Format": "pcm_s16le",
+                "X-Sample-Rate": str(MINIMAX_PCM_SAMPLE_RATE),
+            },
+        )
+
+    try:
+        audio, media_type = await asyncio_synthesize(text, language)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
     except Exception as exc:
         return json_error(str(exc), 502)
 
@@ -179,10 +266,153 @@ async def free_coach_tts(request: Request):
 
 
 @app.websocket("/api/free-coach/transcribe")
-async def free_coach_transcribe(websocket: WebSocket):
-    await transcribe_websocket(websocket)
+async def free_coach_transcribe(
+    websocket: WebSocket,
+    language: str = Query("en"),
+):
+    await transcribe_websocket(websocket, language)
 
 
-async def asyncio_synthesize(text: str) -> tuple[bytes, str]:
+def _public_api_base(request: Request) -> str:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    if host in {"127.0.0.1:8000", "localhost:8000"}:
+        return "http://127.0.0.1:8000/api"
+    return f"{proto}://{host}/realtime/api"
+
+
+@app.get("/api/elevenlabs/config")
+async def elevenlabs_config(request: Request):
+    return public_page_config(_public_api_base(request))
+
+
+@app.get("/api/elevenlabs/conversation-token")
+async def elevenlabs_conversation_token():
+    if not ELEVENLABS_API_KEY:
+        return json_error("ELEVENLABS_API_KEY 未配置", 500)
+    if not ELEVENLABS_AGENT_ID:
+        return json_error("ELEVENLABS_AGENT_ID 未配置", 500)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{ELEVENLABS_BASE_URL}/v1/convai/conversation/token",
+                params={"agent_id": ELEVENLABS_AGENT_ID},
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+            )
+    except httpx.HTTPError as exc:
+        return json_error(f"获取 ElevenLabs conversation token 失败：{exc}", 502)
+    if response.status_code >= 400:
+        detail = response.text[:500]
+        message = "获取 ElevenLabs conversation token 失败"
+        if "missing_permissions" in detail or "convai_write" in detail:
+            message = (
+                "ElevenLabs API key 缺少 convai_write 权限，无法签发 conversation token。"
+                "当前 Agent 未开鉴权，页面会改用公开 Agent ID 连接。"
+            )
+        return json_error(
+            message,
+            response.status_code,
+            extra={"detail": detail},
+        )
+    payload = response.json()
+    token = payload.get("token") or payload.get("conversation_token")
+    if not token:
+        return json_error("ElevenLabs 未返回 conversation token", 502)
+    return {"token": token}
+
+
+@app.get("/api/elevenlabs/signed-url")
+async def elevenlabs_signed_url():
+    if not ELEVENLABS_API_KEY:
+        return json_error("ELEVENLABS_API_KEY 未配置", 500)
+    if not ELEVENLABS_AGENT_ID:
+        return json_error("ELEVENLABS_AGENT_ID 未配置", 500)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{ELEVENLABS_BASE_URL}/v1/convai/conversation/get-signed-url",
+                params={"agent_id": ELEVENLABS_AGENT_ID},
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+            )
+    except httpx.HTTPError as exc:
+        return json_error(f"获取 ElevenLabs signed URL 失败：{exc}", 502)
+    if response.status_code >= 400:
+        return json_error(
+            "获取 ElevenLabs signed URL 失败",
+            response.status_code,
+            extra={"detail": response.text[:500]},
+        )
+    payload = response.json()
+    signed_url = payload.get("signed_url")
+    if not signed_url:
+        return json_error("ElevenLabs 未返回 signed_url", 502)
+    return {"signed_url": signed_url}
+
+
+@app.get("/api/elevenlabs/session-events/{session_id}")
+async def elevenlabs_session_events(session_id: str):
+    """前端旁路：尽早显示用户转写（Custom LLM 收到用户话时推送，跨 worker 文件总线）。"""
+    key = (session_id or "").strip()
+    if not key or len(key) > 128:
+        return json_error("无效 session_id", 400)
+
+    async def event_stream():
+        async for event in iter_ui_events(key):
+            if event.get("type") == "ping":
+                yield ": ping\n\n"
+                continue
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/elevenlabs/v1/chat/completions")
+async def elevenlabs_chat_completions(request: Request):
+    if not custom_llm_authorized(
+        request.headers.get("authorization"),
+        request.headers.get("xi-api-key"),
+    ):
+        return json_error("Custom LLM 鉴权失败", 401)
+    try:
+        payload = await request.json()
+    except Exception:
+        return json_error("请求体不是 JSON", 400)
+    if not isinstance(payload, dict):
+        return json_error("请求体必须是对象", 400)
+
+    async def event_stream():
+        try:
+            async for chunk in stream_free_coach_as_openai(payload):
+                yield chunk
+        except Exception as exc:
+            logger.exception("elevenlabs custom llm failed")
+            error = {"error": {"message": str(exc), "type": "server_error"}}
+            yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n".encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def asyncio_synthesize(text: str, language: str = "en") -> tuple[bytes, str]:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, synthesize_speech, text)
+    return await loop.run_in_executor(None, synthesize_speech, text, language)

@@ -46,9 +46,9 @@ body {
   text-align: center;
   text-decoration: none;
   color: #9ca3af;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  padding: 10px 12px;
+  padding: 9px 8px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(22, 25, 34, 0.65);
@@ -63,6 +63,44 @@ body {
   color: #e8eaed;
   background: rgba(99, 102, 241, 0.22);
   border-color: rgba(129, 140, 248, 0.45);
+}
+
+.setup-card {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(52, 211, 153, 0.22);
+  background: rgba(6, 24, 20, 0.7);
+}
+
+.setup-card h2 {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.setup-card ol {
+  margin: 0;
+  padding-left: 18px;
+  color: #d1d5db;
+  font-size: 0.82rem;
+  line-height: 1.65;
+}
+
+.setup-card code {
+  display: inline-block;
+  margin: 2px 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.setup-card .hint {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  color: #6b7280;
 }
 
 .voice-chat {
@@ -91,6 +129,77 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 10px;
+}
+
+.language-switch {
+  display: flex;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.language-switch.disabled {
+  opacity: 0.55;
+}
+
+.language-switch button {
+  border: 0;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.language-switch button.active {
+  color: #e8eaed;
+  background: rgba(99, 102, 241, 0.35);
+}
+
+.language-switch button:disabled {
+  cursor: not-allowed;
+}
+
+.voice-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 28px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-wrap: wrap;
+}
+
+.voice-picker-label {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.voice-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-picker-options button {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.voice-picker-options button.active {
+  color: #e8eaed;
+  background: rgba(99, 102, 241, 0.35);
+  border-color: rgba(129, 140, 248, 0.45);
 }
 
 .langfuse-toggle {

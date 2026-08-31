@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,12 @@ EVERECHO_API_BASE_LOCAL = os.getenv(
 ).rstrip("/")
 EVERECHO_TARGET = os.getenv("EVERECHO_TARGET", "auto").strip().lower() or "auto"
 EVERECHO_TIME_ZONE = os.getenv("EVERECHO_TIME_ZONE", "Asia/Shanghai")
+try:
+    FREE_COACH_SESSION_POOL_SIZE = max(
+        0, int(os.getenv("FREE_COACH_SESSION_POOL_SIZE", "3"))
+    )
+except ValueError:
+    FREE_COACH_SESSION_POOL_SIZE = 3
 logger = logging.getLogger(__name__)
 
 
@@ -150,6 +157,23 @@ async def bootstrap_free_coach_session() -> dict[str, Any]:
         ) from exc
 
 
+_conversation_locks: dict[str, asyncio.Lock] = {}
+_conversation_locks_guard = asyncio.Lock()
+
+
+async def _conversation_lock(conversation_id: str) -> asyncio.Lock:
+    async with _conversation_locks_guard:
+        lock = _conversation_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _conversation_locks[conversation_id] = lock
+        return lock
+
+
+def _is_turn_busy(detail: str) -> bool:
+    return "already processing" in detail.lower()
+
+
 async def stream_free_coach_message(
     *,
     token: str,
@@ -161,28 +185,105 @@ async def stream_free_coach_message(
     if client_temp_id:
         payload["client_temp_id"] = client_temp_id
 
-    timeout = httpx.Timeout(180.0, connect=8.0)
-    async with _http_client(timeout) as client:
-        async with client.stream(
-            "POST",
-            f"{EVERECHO_API_BASE}/coach/conversations/{conversation_id}/messages/stream",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "text/event-stream",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-        ) as response:
-            if response.status_code >= 400:
-                await response.aread()
-                detail = _error_detail(response)
-                logger.warning("free-coach stream failed: %s", detail)
-                yield (
-                    "event: error\n"
-                    f"data: {json.dumps({'code': 'UPSTREAM', 'message': detail}, ensure_ascii=False)}\n\n"
-                ).encode("utf-8")
-                return
+    lock = await _conversation_lock(conversation_id)
+    async with lock:
+        timeout = httpx.Timeout(180.0, connect=8.0)
+        async with _http_client(timeout) as client:
+            for attempt in range(6):
+                async with client.stream(
+                    "POST",
+                    f"{EVERECHO_API_BASE}/coach/conversations/{conversation_id}/messages/stream",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "text/event-stream",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        await response.aread()
+                        detail = _error_detail(response)
+                        if _is_turn_busy(detail) and attempt < 5:
+                            logger.info(
+                                "free-coach turn busy, retry %s/5",
+                                attempt + 1,
+                            )
+                            await asyncio.sleep(0.35 * (attempt + 1))
+                            continue
+                        logger.warning("free-coach stream failed: %s", detail)
+                        yield (
+                            "event: error\n"
+                            f"data: {json.dumps({'code': 'UPSTREAM', 'message': detail}, ensure_ascii=False)}\n\n"
+                        ).encode("utf-8")
+                        return
 
-            async for chunk in response.aiter_bytes():
-                if chunk:
-                    yield chunk
+                    async for chunk in response.aiter_bytes():
+                        if chunk:
+                            yield chunk
+                    return
+
+
+class FreeCoachSessionPool:
+    """Pre-create EverEcho conversations so "开始对话" does not wait on bootstrap."""
+
+    def __init__(self, size: int = FREE_COACH_SESSION_POOL_SIZE) -> None:
+        self.size = size
+        self._ready: list[dict[str, Any]] = []
+        self._lock = asyncio.Lock()
+        self._refill_task: asyncio.Task[None] | None = None
+        self.last_error: str | None = None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "size": self.size,
+            "ready": len(self._ready),
+            "last_error": self.last_error,
+        }
+
+    async def warmup(self) -> None:
+        if self.size <= 0:
+            logger.info("Free-coach session pool disabled")
+            return
+        logger.info("Pre-warming %s free-coach session(s)…", self.size)
+        self._schedule_refill()
+        if self._refill_task:
+            await self._refill_task
+        logger.info("Free-coach session pool ready=%s", len(self._ready))
+
+    async def take(self) -> dict[str, Any]:
+        async with self._lock:
+            session = self._ready.pop(0) if self._ready else None
+        if session is None:
+            task = self._refill_task
+            if task and not task.done():
+                await task
+                async with self._lock:
+                    session = self._ready.pop(0) if self._ready else None
+            if session is None:
+                return await bootstrap_free_coach_session()
+        self._schedule_refill()
+        return session
+
+    def _schedule_refill(self) -> None:
+        if self._refill_task and not self._refill_task.done():
+            return
+        self._refill_task = asyncio.create_task(self._ensure_ready())
+
+    async def _ensure_ready(self) -> None:
+        while True:
+            async with self._lock:
+                if len(self._ready) >= self.size:
+                    return
+            try:
+                session = await bootstrap_free_coach_session()
+            except Exception as exc:
+                self.last_error = str(exc)
+                logger.warning("Failed to pre-warm free-coach session: %s", exc)
+                return
+            async with self._lock:
+                if len(self._ready) < self.size:
+                    self._ready.append(session)
+                    self.last_error = None
+
+
+session_pool = FreeCoachSessionPool()

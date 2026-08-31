@@ -5,6 +5,30 @@ path = Path("/etc/nginx/conf.d/everecho-api.conf")
 text = path.read_text()
 changed = False
 
+eleven_marker = "location ^~ /realtime/api/elevenlabs/"
+eleven_snippet = """
+    location ^~ /realtime/api/elevenlabs/ {
+        proxy_pass http://127.0.0.1:8000/api/elevenlabs/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+        chunked_transfer_encoding on;
+    }
+
+"""
+
+if eleven_marker not in text:
+    api_marker = "    location ^~ /realtime/api/ {"
+    if api_marker in text:
+        text = text.replace(api_marker, eleven_snippet + api_marker, 1)
+        changed = True
+
 ws_marker = "location ^~ /realtime/api/free-coach/transcribe"
 ws_snippet = """
     location ^~ /realtime/api/free-coach/transcribe {

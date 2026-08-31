@@ -1,11 +1,52 @@
 export const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/{2,}/g, "/");
 
-export function transcribeSocketUrl(): string {
+export type VoiceLanguage = "en" | "zh";
+
+export const MINIMAX_VOICES = [
+  {
+    id: "Chinese (Mandarin)_Wise_Women",
+    label: "阅历姐姐",
+  },
+  {
+    id: "Chinese (Mandarin)_Warm_Bestie",
+    label: "温暖闺蜜",
+  },
+  {
+    id: "Chinese (Mandarin)_Warm_Girl",
+    label: "温暖少女",
+  },
+  {
+    id: "Chinese (Mandarin)_IntellectualGirl",
+    label: "知性少女",
+  },
+  {
+    id: "Chinese (Mandarin)_Laid_BackGirl",
+    label: "慵懒少女",
+  },
+] as const;
+
+export type MinimaxVoiceId = (typeof MINIMAX_VOICES)[number]["id"];
+
+export const DEFAULT_MINIMAX_VOICE_ID: MinimaxVoiceId =
+  "Chinese (Mandarin)_IntellectualGirl";
+
+export const MINIMAX_VOICE_STORAGE_KEY = "free-coach-minimax-voice-v2";
+
+export function isMinimaxVoiceId(value: string): value is MinimaxVoiceId {
+  return MINIMAX_VOICES.some((voice) => voice.id === value);
+}
+
+export function minimaxVoiceLabel(voiceId: string): string {
+  return MINIMAX_VOICES.find((voice) => voice.id === voiceId)?.label ?? "中文音色";
+}
+
+export function transcribeSocketUrl(language: VoiceLanguage = "zh"): string {
+  const query = `?language=${encodeURIComponent(language)}`;
   if (import.meta.env.DEV) {
-    return "ws://127.0.0.1:8000/api/free-coach/transcribe";
+    return `ws://127.0.0.1:8000/api/free-coach/transcribe${query}`;
   }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${API_BASE}/free-coach/transcribe`;
+  return `${protocol}//${window.location.host}${API_BASE}/free-coach/transcribe${query}`;
 }
 
 export function resample(
@@ -122,20 +163,28 @@ export async function createMicCapture(
 }
 
 const END_PUNCT = new Set(["。", "！", "？", "!", "?", "…"]);
+const COMMA_PUNCT = new Set(["，", ",", "、"]);
 const TRAILING_CLOSE = /["'”’」』)\]】]/;
+
+function isDigit(ch: string | undefined): boolean {
+  return !!ch && /\d/.test(ch);
+}
 
 function isTerminatingPunct(buffer: string, index: number): boolean {
   const ch = buffer[index];
   if (END_PUNCT.has(ch)) return true;
+  if (COMMA_PUNCT.has(ch)) {
+    return !(isDigit(buffer[index - 1]) && isDigit(buffer[index + 1]));
+  }
   if (ch !== ".") return false;
   const prev = buffer[index - 1];
   const next = buffer[index + 1];
-  if (prev && /\d/.test(prev) && next && /\d/.test(next)) return false;
+  if (isDigit(prev) && isDigit(next)) return false;
   if (next && /[A-Za-z]/.test(next)) return false;
   return !next || /\s/.test(next) || TRAILING_CLOSE.test(next);
 }
 
-/** Only emit sentences that end with terminating punctuation. */
+/** Emit a clip when a sentence or comma clause is complete. */
 export function drainSentences(buffer: string): {
   sentences: string[];
   rest: string;
@@ -154,6 +203,64 @@ export function drainSentences(buffer: string): {
     i = end - 1;
   }
   return { sentences, rest: buffer.slice(start) };
+}
+
+export const FLUSH_COMPLETE_MS = 700;
+export const FLUSH_DEFAULT_MS = 850;
+export const FLUSH_INCOMPLETE_MS = 1600;
+export const FLUSH_MIC_HOLD_MS = 400;
+export const FLUSH_MAX_MS = 2400;
+
+const COMPLETE_END = /[。！？!?]$/;
+const INCOMPLETE_END_PUNCT = /[,，、…]$/;
+const COMPLETE_SHORT_ZH =
+  /^(嗯+|啊+|好的?|对|是的?|不是|谢谢|行|可以|没了|没有|结束|拜拜|再见|ok|okay)$/i;
+const COMPLETE_SHORT_EN =
+  /^(yes|yeah|yep|no|nope|ok|okay|thanks|thank you|sure|right|done|bye|hello|hi)$/i;
+const INCOMPLETE_TRAIL_ZH =
+  /(?:然后|而且|但是|不过|因为|所以|如果|虽然|或者|还是|还有|就是说|就是|其实|比如说|比如|那个|这个|的话|以及|我觉得|我想|可能是|可能|应该是|嗯+|啊+|呃+)$/;
+const INCOMPLETE_TRAIL_EN =
+  /(?:\b(?:and|but|or|so|because|if|when|although|and then|or maybe|i think|i mean|you know|like|well|actually|um+|uh+|er+)\s*)$/i;
+const HOLD_OPEN_ZH =
+  /(?:让我想想|我想想看|我想想|等一下|稍等一下|稍等|你等我一下)[啊呀呢吧]*[。！？!?…]*$/;
+const HOLD_OPEN_EN =
+  /(?:\b(?:let me think|i(?:'m| am) thinking|hold on|wait a second|wait)\b)[.!?…]*$/i;
+
+function stripTrailingClose(text: string): string {
+  return text.trim().replace(/["'”’」』)\]】]+$/u, "");
+}
+
+export function isCoachTurnBusy(message: string): boolean {
+  return /already processing/i.test(message);
+}
+
+/** Silence to wait after an STT final, based on whether the utterance looks finished. */
+export function endpointFlushMs(
+  text: string,
+  language: VoiceLanguage
+): number {
+  const stripped = stripTrailingClose(text);
+  if (!stripped) return FLUSH_DEFAULT_MS;
+  if (HOLD_OPEN_ZH.test(stripped) || HOLD_OPEN_EN.test(stripped)) {
+    return FLUSH_INCOMPLETE_MS;
+  }
+  if (COMPLETE_END.test(stripped)) return FLUSH_COMPLETE_MS;
+  if (INCOMPLETE_END_PUNCT.test(stripped)) return FLUSH_INCOMPLETE_MS;
+  if (INCOMPLETE_TRAIL_ZH.test(stripped) || INCOMPLETE_TRAIL_EN.test(stripped)) {
+    return FLUSH_INCOMPLETE_MS;
+  }
+  if (language === "zh") {
+    const chars = stripped.replace(/\s+/g, "");
+    if (chars.length <= 2 && !COMPLETE_SHORT_ZH.test(chars)) {
+      return FLUSH_INCOMPLETE_MS;
+    }
+  } else {
+    const words = stripped.split(/\s+/).filter(Boolean);
+    if (words.length <= 2 && !COMPLETE_SHORT_EN.test(stripped)) {
+      return FLUSH_INCOMPLETE_MS;
+    }
+  }
+  return FLUSH_DEFAULT_MS;
 }
 
 export async function readSseStream(

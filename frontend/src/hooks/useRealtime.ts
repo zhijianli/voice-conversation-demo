@@ -7,6 +7,10 @@ function nextId() {
   return `msg-${++messageCounter}`;
 }
 
+function transcriptFamily(type: string): "output" | "legacy" {
+  return type.includes("output_audio_transcript") ? "output" : "legacy";
+}
+
 const API_BASE = `${import.meta.env.BASE_URL}api`;
 
 export function useRealtime(): RealtimeState & RealtimeActions {
@@ -22,11 +26,22 @@ export function useRealtime(): RealtimeState & RealtimeActions {
   const assistantDraftRef = useRef<string>("");
   const assistantMsgIdRef = useRef<string | null>(null);
   const userPendingMsgIdRef = useRef<string | null>(null);
+  const transcriptSourceRef = useRef<"output" | "legacy" | null>(null);
 
   const resetAssistantDraft = useCallback(() => {
     assistantDraftRef.current = "";
     assistantMsgIdRef.current = null;
+    transcriptSourceRef.current = null;
   }, []);
+
+  const acceptTranscriptEvent = (type: string) => {
+    const family = transcriptFamily(type);
+    if (transcriptSourceRef.current && transcriptSourceRef.current !== family) {
+      return false;
+    }
+    transcriptSourceRef.current = family;
+    return true;
+  };
 
   const resetUserPending = useCallback(() => {
     userPendingMsgIdRef.current = null;
@@ -34,25 +49,34 @@ export function useRealtime(): RealtimeState & RealtimeActions {
 
   const upsertAssistantMessage = useCallback((text: string, isPartial: boolean) => {
     setMessages((prev) => {
-      const id = assistantMsgIdRef.current ?? nextId();
-      assistantMsgIdRef.current = id;
+      let index = assistantMsgIdRef.current
+        ? prev.findIndex((m) => m.id === assistantMsgIdRef.current)
+        : -1;
 
-      const existingIndex = prev.findIndex((m) => m.id === id);
+      // Realtime 2.1 可能在同一轮里再次下发 response.created，把 ID 清掉。
+      // 此时最后一条未收口的 AI 消息就是正在流式输出的那条，必须原地更新。
+      if (index < 0) {
+        for (let i = prev.length - 1; i >= 0; i -= 1) {
+          if (prev[i].role === "assistant" && prev[i].isPartial) {
+            index = i;
+            break;
+          }
+        }
+      }
+
+      const id = index >= 0 ? prev[index].id : nextId();
+      assistantMsgIdRef.current = id;
       const entry: Message = { id, role: "assistant", text, isPartial };
 
-      if (existingIndex >= 0) {
+      if (index >= 0) {
         const next = [...prev];
-        next[existingIndex] = entry;
+        next[index] = entry;
         return next;
       }
 
       const last = prev[prev.length - 1];
-      if (
-        last?.role === "assistant" &&
-        last.text === text &&
-        !last.isPartial &&
-        !isPartial
-      ) {
+      if (last?.role === "assistant" && last.text === text && !last.isPartial && !isPartial) {
+        assistantMsgIdRef.current = last.id;
         return prev;
       }
 
@@ -106,15 +130,21 @@ export function useRealtime(): RealtimeState & RealtimeActions {
   );
 
   const finalizeAssistantMessage = useCallback(() => {
-    if (!assistantMsgIdRef.current) return;
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === assistantMsgIdRef.current ? { ...m, isPartial: false } : m
-      )
-    );
+    const currentId = assistantMsgIdRef.current;
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
+        if (m.role === "assistant" && (m.id === currentId || m.isPartial)) {
+          changed = true;
+          return { ...m, isPartial: false };
+        }
+        return m;
+      });
+      return changed ? next : prev;
+    });
     assistantDraftRef.current = "";
     assistantMsgIdRef.current = null;
+    transcriptSourceRef.current = null;
   }, []);
 
   const cleanup = useCallback(() => {
@@ -143,10 +173,15 @@ export function useRealtime(): RealtimeState & RealtimeActions {
 
       switch (type) {
         case "response.created":
-          resetAssistantDraft();
+          // 新的一轮回复才清空草稿。同一轮里重复的 created 不能丢掉正在输出的气泡。
+          if (!assistantMsgIdRef.current) {
+            assistantDraftRef.current = "";
+            transcriptSourceRef.current = null;
+          }
           break;
 
         case "input_audio_buffer.speech_started":
+          finalizeAssistantMessage();
           setIsSpeaking(true);
           break;
 
@@ -170,6 +205,7 @@ export function useRealtime(): RealtimeState & RealtimeActions {
 
         case "response.output_audio_transcript.delta":
         case "response.audio_transcript.delta": {
+          if (!acceptTranscriptEvent(type)) break;
           const delta = (event as { delta?: string }).delta ?? "";
           assistantDraftRef.current += delta;
           upsertAssistantMessage(assistantDraftRef.current, true);
@@ -178,6 +214,7 @@ export function useRealtime(): RealtimeState & RealtimeActions {
 
         case "response.output_audio_transcript.done":
         case "response.audio_transcript.done": {
+          if (!acceptTranscriptEvent(type)) break;
           const transcript =
             (event as { transcript?: string }).transcript ??
             assistantDraftRef.current;
@@ -201,12 +238,7 @@ export function useRealtime(): RealtimeState & RealtimeActions {
         }
       }
     },
-    [
-      completeUserTranscript,
-      finalizeAssistantMessage,
-      resetAssistantDraft,
-      upsertAssistantMessage,
-    ]
+    [completeUserTranscript, finalizeAssistantMessage, upsertAssistantMessage]
   );
 
   const connect = useCallback(async (useLangfuse = false) => {
