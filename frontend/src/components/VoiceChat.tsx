@@ -41,19 +41,13 @@ function formatMs(ms: number | null): string {
 }
 
 function formatMessageLatency(latency: RoundLatency): string {
-  const parts: string[] = [];
-  if (latency.asrMs != null) parts.push(`ASR 收口 ${formatMs(latency.asrMs)}`);
-  if (latency.llmMs != null) parts.push(`首句生成 ${formatMs(latency.llmMs)}`);
-  if (latency.ttsMs != null) parts.push(`首句 TTS ${formatMs(latency.ttsMs)}`);
+  const parts = [
+    `ASR 收口 ${formatMs(latency.asrMs)}`,
+    `首句生成 ${formatMs(latency.llmMs)}`,
+    `首句 TTS ${formatMs(latency.ttsMs)}`,
+  ];
   if (latency.totalMs != null) {
-    // ElevenLabs 等只有「距用户说完」时，文案更直观
-    const onlyTotal =
-      latency.asrMs == null && latency.llmMs == null && latency.ttsMs == null;
-    parts.push(
-      onlyTotal
-        ? `距你说完 ${formatMs(latency.totalMs)}`
-        : `听到声音 ${formatMs(latency.totalMs)}`
-    );
+    parts.push(`听到声音 ${formatMs(latency.totalMs)}`);
   }
   return parts.join(" · ");
 }
