@@ -14,6 +14,7 @@ import {
   transcribeSocketUrl,
   pcmRms,
   type MinimaxVoiceId,
+  type PipelineId,
   type VoiceLanguage,
 } from "../lib/voice";
 
@@ -84,7 +85,8 @@ function phaseLabel(phase: VoicePhase): string {
 
 export function useFreeCoachVoice(
   language: VoiceLanguage = "zh",
-  voiceId: MinimaxVoiceId = DEFAULT_MINIMAX_VOICE_ID
+  voiceId: MinimaxVoiceId = DEFAULT_MINIMAX_VOICE_ID,
+  pipeline: PipelineId = "free-coach"
 ) {
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [phase, setPhase] = useState<VoicePhase>("idle");
@@ -386,7 +388,7 @@ export function useFreeCoachVoice(
       });
       firstAudio.catch(() => undefined);
 
-      const pending = fetch(`${API_BASE}/free-coach/tts`, {
+      const pending = fetch(`${API_BASE}/${pipeline}/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -500,7 +502,7 @@ export function useFreeCoachVoice(
         for (let attempt = 0; attempt < 6; attempt += 1) {
           if (controller.signal.aborted || closedRef.current) return;
           try {
-            const response = await fetch(`${API_BASE}/free-coach/messages`, {
+            const response = await fetch(`${API_BASE}/${pipeline}/messages`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               signal: controller.signal,
@@ -804,7 +806,7 @@ export function useFreeCoachVoice(
             autoGainControl: true,
           },
         }),
-        fetch(`${API_BASE}/free-coach/bootstrap`, {
+        fetch(`${API_BASE}/${pipeline}/bootstrap`, {
           method: "POST",
         }),
       ]);
@@ -882,7 +884,7 @@ export function useFreeCoachVoice(
             resolve();
             return;
           }
-          const ws = new WebSocket(transcribeSocketUrl(language));
+          const ws = new WebSocket(transcribeSocketUrl(language, pipeline));
           ws.binaryType = "arraybuffer";
           wsRef.current = ws;
           let settled = false;

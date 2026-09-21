@@ -53,6 +53,17 @@ from prompts import (
     LANGFUSE_PROMPT_NAME,
     get_instructions,
 )
+from deepgram_adapter import (
+    custom_llm_authorized as deepgram_custom_llm_authorized,
+    deepgram_config,
+    handle_deepgram_ws,
+    public_page_config as deepgram_public_config,
+)
+from deepgram_transcribe import transcribe_websocket as deepgram_transcribe_websocket
+from livekit_pipeline import livekit_config
+from s2s_bailian import bailian_config, handle_bailian_ws
+from s2s_doubao import doubao_config, handle_doubao_ws
+from s2s_gemini import gemini_config, handle_gemini_ws
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REALTIME_MODEL = os.getenv("REALTIME_MODEL", "gpt-realtime-2.1")
@@ -130,6 +141,18 @@ async def health():
             "session_pool": session_pool.snapshot(),
         },
         "elevenlabs_agent": elevenlabs_adapter_config(),
+        "s2s": {
+            "openai": {
+                "configured": bool(OPENAI_API_KEY),
+                "model": REALTIME_MODEL,
+                "voice": AUDIO_CONFIG["output"]["voice"],
+            },
+            "bailian": bailian_config(),
+            "gemini": gemini_config(),
+            "doubao": doubao_config(),
+        },
+        "deepgram": deepgram_config(),
+        "livekit": livekit_config(),
     }
 
 
@@ -271,6 +294,137 @@ async def free_coach_transcribe(
     language: str = Query("en"),
 ):
     await transcribe_websocket(websocket, language)
+
+
+@app.get("/api/s2s/config")
+async def s2s_config():
+    return {
+        "openai": {
+            "transport": "webrtc",
+            "voice": AUDIO_CONFIG["output"]["voice"],
+        },
+        "bailian": {**bailian_config(), "transport": "websocket"},
+        "gemini": {**gemini_config(), "transport": "websocket"},
+        "doubao": {**doubao_config(), "transport": "websocket"},
+    }
+
+
+@app.websocket("/api/s2s/bailian/ws")
+async def s2s_bailian_ws(
+    websocket: WebSocket,
+    use_langfuse: bool = Query(False),
+):
+    await handle_bailian_ws(websocket, use_langfuse=use_langfuse)
+
+
+@app.websocket("/api/s2s/gemini/ws")
+async def s2s_gemini_ws(
+    websocket: WebSocket,
+    use_langfuse: bool = Query(False),
+):
+    await handle_gemini_ws(websocket, use_langfuse=use_langfuse)
+
+
+@app.websocket("/api/s2s/doubao/ws")
+async def s2s_doubao_ws(
+    websocket: WebSocket,
+    use_langfuse: bool = Query(False),
+):
+    await handle_doubao_ws(websocket, use_langfuse=use_langfuse)
+
+
+@app.get("/api/deepgram/config")
+async def deepgram_config_route(request: Request):
+    return deepgram_public_config(_public_api_base(request))
+
+
+@app.websocket("/api/deepgram/ws")
+async def deepgram_ws(
+    websocket: WebSocket,
+    request: Request,
+    use_langfuse: bool = Query(False),
+    session_id: str = Query(""),
+):
+    base = _public_api_base(request)
+    llm_url = f"{base.rstrip('/')}/deepgram/v1/chat/completions"
+    await handle_deepgram_ws(
+        websocket,
+        use_langfuse=use_langfuse,
+        session_id=session_id,
+        llm_url=llm_url,
+    )
+
+
+@app.post("/api/deepgram/v1/chat/completions")
+async def deepgram_chat_completions(request: Request):
+    if not deepgram_custom_llm_authorized(
+        request.headers.get("authorization"),
+        request.headers.get("x-session-id"),
+    ):
+        return json_error("Deepgram Custom LLM 鉴权失败", 401)
+    try:
+        payload = await request.json()
+    except Exception:
+        return json_error("请求体不是 JSON", 400)
+    if not isinstance(payload, dict):
+        return json_error("请求体必须是对象", 400)
+
+    session_id = (request.headers.get("x-session-id") or "").strip()
+    if session_id:
+        payload = {**payload, "session_id": session_id}
+
+    async def event_stream():
+        try:
+            async for chunk in stream_free_coach_as_openai(payload):
+                yield chunk
+        except Exception as exc:
+            logger.exception("deepgram custom llm failed")
+            error = {"error": {"message": str(exc), "type": "server_error"}}
+            yield f"data: {json.dumps(error, ensure_ascii=False)}\n\n".encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/livekit/bootstrap")
+async def livekit_bootstrap():
+    asyncio.create_task(warmup_minimax())
+    try:
+        session = await session_pool.take()
+    except Exception as exc:
+        return json_error(str(exc), 502)
+    return session
+
+
+@app.post("/api/livekit/messages")
+async def livekit_messages(request: Request):
+    return await free_coach_messages(request)
+
+
+@app.post("/api/livekit/tts")
+async def livekit_tts(request: Request):
+    return await free_coach_tts(request)
+
+
+@app.websocket("/api/livekit/transcribe")
+async def livekit_transcribe(
+    websocket: WebSocket,
+    language: str = Query("zh"),
+):
+    await deepgram_transcribe_websocket(websocket, language)
+
+
+@app.get("/api/livekit/config")
+async def livekit_config_route():
+    return livekit_config()
 
 
 def _public_api_base(request: Request) -> str:

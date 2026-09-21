@@ -16,15 +16,13 @@ const COPY: Record<
   { emptyHint: string; emptySubHint: string; placeholder: string }
 > = {
   en: {
-    emptyHint: "点击「开始对话」后对着麦克风说英语，也可以在下方打字发送。",
-    emptySubHint:
-      "识别结果会发给 volo free-coach，回复由 Polly 英文 Generative 音色朗读。",
+    emptyHint: "点击「开始对话」后对着麦克风说话，也可以在下方打字发送。",
+    emptySubHint: "识别由 Deepgram 完成，对话逻辑走 volo，回复由 MiniMax 女声朗读。",
     placeholder: "也可以打字发给教练…",
   },
   zh: {
     emptyHint: "点击「开始对话」后对着麦克风说中文，也可以在下方打字发送。",
-    emptySubHint:
-      "识别结果会发给 volo free-coach，回复由 MiniMax 中文音色朗读。",
+    emptySubHint: "识别由 Deepgram 完成，对话逻辑走 volo，回复由 MiniMax 女声朗读。",
     placeholder: "也可以打字发给教练…",
   },
 };
@@ -39,8 +37,8 @@ function readStoredVoice(): MinimaxVoiceId {
   return DEFAULT_MINIMAX_VOICE_ID;
 }
 
-export function FreeCoachVoiceContent() {
-  const scheme = getScheme("free-coach");
+export function LiveKitVoiceContent() {
+  const scheme = getScheme("livekit");
   const [language, setLanguage] = useState<VoiceLanguage>("zh");
   const [voiceId, setVoiceId] = useState<MinimaxVoiceId>(readStoredVoice);
   const {
@@ -53,27 +51,30 @@ export function FreeCoachVoiceContent() {
     disconnect,
     sendTypedMessage,
     micLoud,
-  } = useFreeCoachVoice(language, voiceId);
+  } = useFreeCoachVoice(language, voiceId, "livekit");
   const [draft, setDraft] = useState("");
   const copy = COPY[language];
   const settingsLocked = status === "connected" || status === "connecting";
 
   useEffect(() => {
-    document.title = "Free Coach · 自主拼接";
+    document.title = "LiveKit + volo · 自主拼接";
   }, []);
 
   useEffect(() => {
+    if (language !== "zh") return;
     try {
       localStorage.setItem(MINIMAX_VOICE_STORAGE_KEY, voiceId);
     } catch {
       // ignore
     }
-  }, [voiceId]);
+  }, [language, voiceId]);
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    sendTypedMessage(draft);
+    const text = draft.trim();
+    if (!text) return;
     setDraft("");
+    void sendTypedMessage(text);
   };
 
   if (!scheme) return null;
@@ -100,24 +101,23 @@ export function FreeCoachVoiceContent() {
         messages={messages}
         error={error}
         isSpeaking={isSpeaking}
-        activityLabel={status === "connected" ? phaseLabel : undefined}
-        micLoud={micLoud}
+        activityLabel={phaseLabel}
         onConnect={connect}
         onDisconnect={disconnect}
+        micLoud={micLoud}
         footerExtra={
-          status === "connected" ? (
-            <form className="text-fallback" onSubmit={onSubmit}>
-              <input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder={copy.placeholder}
-                maxLength={8000}
-              />
-              <button type="submit" className="btn btn-secondary" disabled={!draft.trim()}>
-                发送
-              </button>
-            </form>
-          ) : null
+          <form className="typed-input-row" onSubmit={onSubmit}>
+            <input
+              type="text"
+              value={draft}
+              placeholder={copy.placeholder}
+              disabled={status !== "connected"}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <button type="submit" className="btn btn-secondary" disabled={status !== "connected"}>
+              发送
+            </button>
+          </form>
         }
       />
     </div>

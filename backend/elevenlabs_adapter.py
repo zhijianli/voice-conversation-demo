@@ -187,7 +187,7 @@ def public_page_config(request_base_url: str = "") -> dict[str, Any]:
         "custom_llm_model": ELEVENLABS_CUSTOM_LLM_MODEL,
         "opening": {"zh": OPENING_ZH, "en": OPENING_EN},
         "system_prompt_note": (
-            "人设以 EverEcho free_coach 为准。ElevenLabs Agent 的 system prompt 会被适配层忽略；"
+            "人设以 volo free_coach 为准。ElevenLabs Agent 的 system prompt 会被适配层忽略；"
             "请把 First message 设成 opening，或由本页在会话开始时覆盖。"
         ),
     }
@@ -472,7 +472,7 @@ async def _stream_everecho(session: dict[str, Any], user_text: str, model: str) 
 
 
 async def stream_free_coach_as_openai(payload: dict[str, Any]) -> AsyncIterator[bytes]:
-    """Ignore ElevenLabs system prompt; only the latest user turn goes to EverEcho."""
+    """Ignore ElevenLabs system prompt; only the latest user turn goes to volo."""
     model = str(payload.get("model") or ELEVENLABS_CUSTOM_LLM_MODEL)
     messages = payload.get("messages")
     if not isinstance(messages, list):
@@ -488,7 +488,7 @@ async def stream_free_coach_as_openai(payload: dict[str, Any]) -> AsyncIterator[
         raise RuntimeError("消息过长")
 
     session_key = resolve_session_key(payload, user_texts)
-    # 在打 EverEcho 之前就推用户转写，前端可立刻显示，不用等 LLM/ElevenLabs 回包。
+    # 在打 volo 之前就推用户转写，前端可立刻显示，不用等 LLM/ElevenLabs 回包。
     _publish_user_transcript_to_ui(payload, user_text, session_key)
     session = await _ensure_session(session_key)
     if user_text == session.get("last_user_text") and session.get("last_assistant_text"):

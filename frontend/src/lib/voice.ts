@@ -40,13 +40,18 @@ export function minimaxVoiceLabel(voiceId: string): string {
   return MINIMAX_VOICES.find((voice) => voice.id === voiceId)?.label ?? "中文音色";
 }
 
-export function transcribeSocketUrl(language: VoiceLanguage = "zh"): string {
+export type PipelineId = "free-coach" | "livekit";
+
+export function transcribeSocketUrl(
+  language: VoiceLanguage = "zh",
+  pipeline: PipelineId = "free-coach"
+): string {
   const query = `?language=${encodeURIComponent(language)}`;
   if (import.meta.env.DEV) {
-    return `ws://127.0.0.1:8000/api/free-coach/transcribe${query}`;
+    return `ws://127.0.0.1:8000/api/${pipeline}/transcribe${query}`;
   }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${API_BASE}/free-coach/transcribe${query}`;
+  return `${protocol}//${window.location.host}${API_BASE}/${pipeline}/transcribe${query}`;
 }
 
 export function resample(

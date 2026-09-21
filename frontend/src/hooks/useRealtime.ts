@@ -241,7 +241,7 @@ export function useRealtime(): RealtimeState & RealtimeActions {
     [completeUserTranscript, finalizeAssistantMessage, upsertAssistantMessage]
   );
 
-  const connect = useCallback(async (useLangfuse = false) => {
+  const connect = useCallback(async (useLangfuse = true) => {
     if (status === "connecting" || status === "connected") return;
 
     setStatus("connecting");

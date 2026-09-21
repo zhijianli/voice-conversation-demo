@@ -43,7 +43,7 @@ def _running_on_cloud_server() -> bool:
 
 
 def resolve_everecho_api_base() -> tuple[str, str]:
-    """Pick EverEcho URL: laptop → public API, EC2 → loopback Node on :3000."""
+    """Pick volo URL: laptop → public API, EC2 → loopback Node on :3000."""
     if EVERECHO_TARGET == "online":
         return EVERECHO_API_BASE_ONLINE, "online"
     if EVERECHO_TARGET == "local":
@@ -60,7 +60,7 @@ def resolve_everecho_api_base() -> tuple[str, str]:
 
 EVERECHO_API_BASE, EVERECHO_API_BASE_MODE = resolve_everecho_api_base()
 logger.info(
-    "EverEcho free-coach → %s (%s)",
+    "volo free-coach → %s (%s)",
     EVERECHO_API_BASE,
     EVERECHO_API_BASE_MODE,
 )
@@ -108,16 +108,16 @@ async def bootstrap_free_coach_session() -> dict[str, Any]:
             if example_response.status_code >= 400:
                 if example_response.status_code in (502, 503, 504):
                     raise RuntimeError(
-                        f"EverEcho 不可用（{EVERECHO_API_BASE} 返回 HTTP {example_response.status_code}）。"
+                        f"volo 不可用（{EVERECHO_API_BASE} 返回 HTTP {example_response.status_code}）。"
                     )
                 raise RuntimeError(
-                    f"创建 EverEcho 测试账号失败：{_error_detail(example_response)}"
+                    f"创建 volo 测试账号失败：{_error_detail(example_response)}"
                 )
 
             example = example_response.json()
             token = example.get("token")
             if not token:
-                raise RuntimeError("EverEcho 未返回 session token")
+                raise RuntimeError("volo 未返回 session token")
 
             conversation_response = await client.post(
                 f"{EVERECHO_API_BASE}/coach/conversations",
@@ -136,7 +136,7 @@ async def bootstrap_free_coach_session() -> dict[str, Any]:
             conversation = created.get("conversation") or {}
             conversation_id = conversation.get("id")
             if not conversation_id:
-                raise RuntimeError("EverEcho 未返回 conversation id")
+                raise RuntimeError("volo 未返回 conversation id")
 
             opening = created.get("opening_message") or {}
             return {
@@ -149,11 +149,11 @@ async def bootstrap_free_coach_session() -> dict[str, Any]:
         raise
     except httpx.ConnectError as exc:
         raise RuntimeError(
-            f"无法连接 EverEcho（{EVERECHO_API_BASE}）。请检查网络或 EVERECHO_API_BASE 配置。"
+            f"无法连接 volo（{EVERECHO_API_BASE}）。请检查网络或 EVERECHO_API_BASE 配置。"
         ) from exc
     except httpx.TimeoutException as exc:
         raise RuntimeError(
-            f"连接 EverEcho 超时（{EVERECHO_API_BASE}）。请确认线上服务可访问。"
+            f"连接 volo 超时（{EVERECHO_API_BASE}）。请确认线上服务可访问。"
         ) from exc
 
 
@@ -224,7 +224,7 @@ async def stream_free_coach_message(
 
 
 class FreeCoachSessionPool:
-    """Pre-create EverEcho conversations so "开始对话" does not wait on bootstrap."""
+    """Pre-create volo conversations so "开始对话" does not wait on bootstrap."""
 
     def __init__(self, size: int = FREE_COACH_SESSION_POOL_SIZE) -> None:
         self.size = size

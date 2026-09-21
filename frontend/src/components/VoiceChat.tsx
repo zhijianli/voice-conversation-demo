@@ -1,11 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import type { ConnectionStatus, Message, RoundLatency } from "../types";
-import type { MinimaxVoiceId, VoiceLanguage } from "../lib/voice";
-import { MINIMAX_VOICES } from "../lib/voice";
-
 interface VoiceChatProps {
-  title?: string;
-  subtitle?: string;
   emptyHint?: string;
   emptySubHint?: string;
   assistantLabel?: string;
@@ -14,16 +9,10 @@ interface VoiceChatProps {
   error: string | null;
   isSpeaking: boolean;
   activityLabel?: string;
-  useLangfuse?: boolean;
-  onUseLangfuseChange?: (value: boolean) => void;
   onConnect: () => void;
   onDisconnect: () => void;
   footerExtra?: ReactNode;
   micLoud?: boolean;
-  language?: VoiceLanguage;
-  onLanguageChange?: (language: VoiceLanguage) => void;
-  voiceId?: MinimaxVoiceId;
-  onVoiceChange?: (voiceId: MinimaxVoiceId) => void;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -53,8 +42,6 @@ function formatMessageLatency(latency: RoundLatency): string {
 }
 
 export function VoiceChat({
-  title = "Realtime 语音对话",
-  subtitle = "基于 OpenAI Realtime API · WebRTC",
   emptyHint = "点击「开始对话」后，直接对着麦克风说话即可。",
   emptySubHint = "AI 会通过扬声器回复，对话内容会显示在这里。",
   assistantLabel = "AI",
@@ -63,20 +50,13 @@ export function VoiceChat({
   error,
   isSpeaking,
   activityLabel,
-  useLangfuse = false,
-  onUseLangfuseChange,
   onConnect,
   onDisconnect,
   footerExtra,
   micLoud = false,
-  language = "zh",
-  onLanguageChange,
-  voiceId,
-  onVoiceChange,
 }: VoiceChatProps) {
   const isConnected = status === "connected";
   const isBusy = status === "connecting";
-  const toggleDisabled = isConnected || isBusy;
   const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -88,77 +68,13 @@ export function VoiceChat({
   return (
     <div className="voice-chat">
       <header className="header">
-        <div>
-          <h1>{title}</h1>
-          <p className="subtitle">{subtitle}</p>
-        </div>
         <div className="header-actions">
-          {onLanguageChange ? (
-            <div
-              className={`language-switch ${toggleDisabled ? "disabled" : ""}`}
-              role="group"
-              aria-label="识别与朗读语言"
-            >
-              <button
-                type="button"
-                className={language === "zh" ? "active" : ""}
-                disabled={toggleDisabled}
-                onClick={() => onLanguageChange("zh")}
-              >
-                中文
-              </button>
-              <button
-                type="button"
-                className={language === "en" ? "active" : ""}
-                disabled={toggleDisabled}
-                onClick={() => onLanguageChange("en")}
-              >
-                English
-              </button>
-            </div>
-          ) : null}
-          {onUseLangfuseChange ? (
-            <label className={`langfuse-toggle ${toggleDisabled ? "disabled" : ""}`}>
-              <input
-                type="checkbox"
-                checked={useLangfuse}
-                disabled={toggleDisabled}
-                onChange={(e) => onUseLangfuseChange(e.target.checked)}
-              />
-              <span className="toggle-track" aria-hidden="true">
-                <span className="toggle-thumb" />
-              </span>
-              <span className="toggle-label">
-                Langfuse 提示词
-                <span className="toggle-hint">constitution + free_coach</span>
-              </span>
-            </label>
-          ) : null}
           <div className={`status-badge status-${status}`}>
             <span className="status-dot" />
             {STATUS_LABEL[status]}
           </div>
         </div>
       </header>
-
-      {onVoiceChange && language === "zh" ? (
-        <div className="voice-picker" role="group" aria-label="教练音色">
-          <span className="voice-picker-label">音色</span>
-          <div className="voice-picker-options">
-            {MINIMAX_VOICES.map((voice) => (
-              <button
-                key={voice.id}
-                type="button"
-                className={voiceId === voice.id ? "active" : ""}
-                aria-pressed={voiceId === voice.id}
-                onClick={() => onVoiceChange(voice.id)}
-              >
-                {voice.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       <section className="transcript-panel" ref={panelRef}>
         {messages.length === 0 ? (

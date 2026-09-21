@@ -138,7 +138,7 @@ ssh -i "C:\Users\zoruf\.ssh\everecho-aws.pem" ec2-user@3.142.136.175 "sudo syste
 用户浏览器
   → https://api.volohorizon.com/realtime/                 （前端静态）
   → https://api.volohorizon.com/realtime/api/...          （本机 FastAPI :8000）
-  → Free Coach：EC2 上 EverEcho http://127.0.0.1:3000/v1
+  → Free Coach：EC2 上 volo http://127.0.0.1:3000/v1
   → STT Amazon Transcribe Streaming / TTS Amazon Polly (en) · MiniMax (zh)
   → OpenAI Realtime 页：WebRTC 音频直连 OpenAI
 ```

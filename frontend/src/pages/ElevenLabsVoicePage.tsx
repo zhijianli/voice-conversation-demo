@@ -1,7 +1,9 @@
 import { ConversationProvider } from "@elevenlabs/react";
 import { useEffect, useState, type FormEvent } from "react";
-import { PageNav } from "../components/PageNav";
+import { SchemeOverview } from "../components/SchemeOverview";
+import { SchemeVoiceSettings } from "../components/SchemeVoiceSettings";
 import { VoiceChat } from "../components/VoiceChat";
+import { getScheme } from "../lib/schemes";
 import {
   useElevenLabsVoice,
   type ElevenLabsPublicConfig,
@@ -11,19 +13,15 @@ import type { VoiceLanguage } from "../lib/voice";
 
 const COPY: Record<
   VoiceLanguage,
-  { subtitle: string; emptyHint: string; emptySubHint: string; placeholder: string }
+  { emptyHint: string; emptySubHint: string; placeholder: string }
 > = {
   zh: {
-    subtitle:
-      "ElevenLabs Conversational AI（听/说/轮次）· EverEcho free-coach（人设与回复）",
     emptyHint:
       "进入页面会预热麦克风权限；点「开始对话」后对着麦克风说中文。语音由 ElevenLabs 处理，教练仍是 Free Coach。",
     emptySubHint: "开场白和 system prompt 以 Free Coach 为准。",
     placeholder: "也可以打字发给教练…",
   },
   en: {
-    subtitle:
-      "ElevenLabs Conversational AI for voice · EverEcho free-coach for replies",
     emptyHint:
       "This page warms up mic permission on load. Click Start, then speak English. ElevenLabs handles voice; Free Coach still answers.",
     emptySubHint: "Opening line and persona stay Free Coach.",
@@ -98,7 +96,7 @@ function SetupCard({
         <li>
           First message 填：<code>{OPENING_TEXT[language]}</code>
         </li>
-        <li>System prompt 留空或随便写——适配层会忽略，人设仍走 EverEcho free_coach。</li>
+        <li>System prompt 留空或随便写——适配层会忽略，人设仍走 volo free_coach。</li>
         <li>
           把 Agent ID 写入 <code>backend/.env</code> 的 <code>ELEVENLABS_AGENT_ID</code> 后重启后端。
         </li>
@@ -109,6 +107,7 @@ function SetupCard({
 }
 
 function ElevenLabsVoiceInner() {
+  const scheme = getScheme("elevenlabs");
   const [language, setLanguage] = useState<VoiceLanguage>("zh");
   const [draft, setDraft] = useState("");
   const {
@@ -124,9 +123,10 @@ function ElevenLabsVoiceInner() {
     sendTypedMessage,
   } = useElevenLabsVoice(language);
   const copy = COPY[language];
+  const settingsLocked = status === "connected" || status === "connecting";
 
   useEffect(() => {
-    document.title = "ElevenLabs 语音对话";
+    document.title = "ElevenLabs · 编排平台";
     const removePreconnect = installElevenLabsPreconnect();
     void warmMicrophonePermission();
     return removePreconnect;
@@ -138,58 +138,65 @@ function ElevenLabsVoiceInner() {
     setDraft("");
   };
 
+  if (!scheme) return null;
+
   return (
-    <>
-      <SetupCard config={config} language={language} />
-      <VoiceChat
-        title="ElevenLabs 语音对话"
-        subtitle={copy.subtitle}
-        emptyHint={copy.emptyHint}
-        emptySubHint={copy.emptySubHint}
-        assistantLabel="教练"
-        status={status}
-        messages={messages}
-        error={error}
-        isSpeaking={isSpeaking}
-        activityLabel={status === "connected" ? activityLabel : undefined}
-        micLoud={micLoud}
-        language={language}
-        onLanguageChange={setLanguage}
-        onConnect={() => {
-          void connect();
-        }}
-        onDisconnect={disconnect}
-        footerExtra={
-          status === "connected" ? (
-            <form className="text-fallback" onSubmit={onSubmit}>
-              <input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder={copy.placeholder}
-                maxLength={8000}
-              />
-              <button
-                type="submit"
-                className="btn btn-secondary"
-                disabled={!draft.trim()}
-              >
-                发送
-              </button>
-            </form>
-          ) : null
+    <div className="scheme-panel">
+      <SchemeOverview
+        scheme={scheme}
+        settings={
+          <SchemeVoiceSettings
+            language={language}
+            onLanguageChange={setLanguage}
+            languageDisabled={settingsLocked}
+          />
         }
       />
-    </>
+      <div className="scheme-panel__demo">
+        <SetupCard config={config} language={language} />
+        <VoiceChat
+          emptyHint={copy.emptyHint}
+          emptySubHint={copy.emptySubHint}
+          assistantLabel="教练"
+          status={status}
+          messages={messages}
+          error={error}
+          isSpeaking={isSpeaking}
+          activityLabel={status === "connected" ? activityLabel : undefined}
+          micLoud={micLoud}
+          onConnect={() => {
+            void connect();
+          }}
+          onDisconnect={disconnect}
+          footerExtra={
+            status === "connected" ? (
+              <form className="text-fallback" onSubmit={onSubmit}>
+                <input
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder={copy.placeholder}
+                  maxLength={8000}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-secondary"
+                  disabled={!draft.trim()}
+                >
+                  发送
+                </button>
+              </form>
+            ) : null
+          }
+        />
+      </div>
+    </div>
   );
 }
 
-export function ElevenLabsVoicePage() {
+export function ElevenLabsVoiceContent() {
   return (
-    <div className="app">
-      <PageNav />
-      <ConversationProvider>
-        <ElevenLabsVoiceInner />
-      </ConversationProvider>
-    </div>
+    <ConversationProvider>
+      <ElevenLabsVoiceInner />
+    </ConversationProvider>
   );
 }
